@@ -11,6 +11,10 @@ pipeline {
     MOVIE_IMAGE    = "movie-service"
     CAST_IMAGE     = "cast-service"
     IMAGE_TAG      = "dev-${BUILD_NUMBER}"
+
+    // Active BuildKit côté CLI (utile même si on utilise buildx)
+    DOCKER_BUILDKIT = "1"
+    COMPOSE_DOCKER_CLI_BUILD = "1"
   }
 
   stages {
@@ -34,9 +38,13 @@ pipeline {
         sh '''
           set -e
           whoami
+          git --version || true
           docker version
-          kubectl version --client
-          helm version
+          docker info
+          echo "### Buildx:"
+          docker buildx version
+          kubectl version --client || true
+          helm version || true
         '''
       }
     }
@@ -53,7 +61,7 @@ pipeline {
       }
     }
 
-    stage('Build images') {
+    stage('Build & Push images (buildx)') {
       steps {
         sh '''
           set -e
@@ -61,18 +69,22 @@ pipeline {
           test -f movie-service/Dockerfile
           test -f cast-service/Dockerfile
 
-          docker build -t $DOCKERHUB_USER/$MOVIE_IMAGE:$IMAGE_TAG ./movie-service
-          docker build -t $DOCKERHUB_USER/$CAST_IMAGE:$IMAGE_TAG ./cast-service
-        '''
-      }
-    }
+          # S'assure d'avoir un builder usable (idempotent)
+          docker buildx create --name jenkins-builder --use >/dev/null 2>&1 || docker buildx use jenkins-builder
+          docker buildx inspect --bootstrap
 
-    stage('Push images') {
-      steps {
-        sh '''
-          set -e
-          docker push $DOCKERHUB_USER/$MOVIE_IMAGE:$IMAGE_TAG
-          docker push $DOCKERHUB_USER/$CAST_IMAGE:$IMAGE_TAG
+          # Build+push en une commande (obligatoire avec buildx si on veut pousser proprement)
+          docker buildx build \
+            --platform linux/amd64 \
+            -t "$DOCKERHUB_USER/$MOVIE_IMAGE:$IMAGE_TAG" \
+            --push \
+            ./movie-service
+
+          docker buildx build \
+            --platform linux/amd64 \
+            -t "$DOCKERHUB_USER/$CAST_IMAGE:$IMAGE_TAG" \
+            --push \
+            ./cast-service
         '''
       }
     }
@@ -80,7 +92,11 @@ pipeline {
 
   post {
     always {
-      sh 'docker logout || true'
+      sh '''
+        docker logout || true
+        # Nettoyage léger : ne casse rien si absent
+        docker buildx rm jenkins-builder >/dev/null 2>&1 || true
+      '''
     }
   }
 }
