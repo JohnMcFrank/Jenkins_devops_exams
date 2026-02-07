@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: movie-db
+  namespace: dev
+spec:
+  selector:
+    app: movie-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: movie-db
+  namespace: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: movie-db
+  template:
+    metadata:
+      labels:
+        app: movie-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:12.1-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: movie_db_username
+            - name: POSTGRES_PASSWORD
+              value: movie_db_password
+            - name: POSTGRES_DB
+              value: movie_db_dev

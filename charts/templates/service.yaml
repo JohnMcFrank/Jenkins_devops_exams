@@ -9,8 +9,10 @@ spec:
   ports:
     - port: {{ .Values.service.port }}
       targetPort: {{ .Values.service.targetPort }}
-      nodePort: {{ .Values.service.nodePort }}
       protocol: TCP
+{{- if eq .Values.service.type "NodePort" }}
+      nodePort: {{ .Values.service.nodePort }}
+{{- end }}
       name: http
   selector:
     {{- include "fastapiapp.selectorLabels" . | nindent 4 }}
