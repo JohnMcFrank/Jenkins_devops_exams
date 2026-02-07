@@ -1,0 +1,23 @@
+replicaCount: 1
+
+image:
+  repository: johndavidmcfrank/movie-service
+  tag: dev
+
+imagePullSecrets: []
+
+# Forcer un lancement stable
+command: ["python3","-m","uvicorn"]
+args: ["app.main:app","--host","0.0.0.0","--port","8000","--loop","asyncio"]
+
+env:
+  - name: DATABASE_URI
+    value: postgresql://movie_db_username:movie_db_password@movie-db:5432/movie_db_dev
+  - name: CAST_SERVICE_HOST_URL
+    value: http://cast-service:8000/api/v1/casts/
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
