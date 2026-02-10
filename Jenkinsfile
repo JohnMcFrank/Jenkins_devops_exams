@@ -10,7 +10,9 @@ pipeline {
     DOCKERHUB_USER = "johndavidmcfrank"
     MOVIE_IMAGE    = "movie-service"
     CAST_IMAGE     = "cast-service"
-    IMAGE_TAG      = "dev-${BUILD_NUMBER}"
+
+    // Tag = branche + build number (ex: staging-42, qa-12, master-7)
+    IMAGE_TAG      = "${BRANCH_NAME}-${BUILD_NUMBER}"
 
     // Active BuildKit côté CLI (utile même si on utilise buildx)
     DOCKER_BUILDKIT = "1"
@@ -24,6 +26,7 @@ pipeline {
         checkout scm
         sh '''
           set -e
+          echo "### Branch: $BRANCH_NAME"
           echo "### Workspace:"
           pwd
           ls -lah
@@ -43,8 +46,8 @@ pipeline {
           docker info
           echo "### Buildx:"
           docker buildx version
-          kubectl version --client || true
-          helm version || true
+          kubectl version --client
+          helm version
         '''
       }
     }
@@ -69,11 +72,9 @@ pipeline {
           test -f movie-service/Dockerfile
           test -f cast-service/Dockerfile
 
-          # S'assure d'avoir un builder usable (idempotent)
           docker buildx create --name jenkins-builder --use >/dev/null 2>&1 || docker buildx use jenkins-builder
           docker buildx inspect --bootstrap
 
-          # Build+push en une commande (obligatoire avec buildx si on veut pousser proprement)
           docker buildx build \
             --platform linux/amd64 \
             -t "$DOCKERHUB_USER/$MOVIE_IMAGE:$IMAGE_TAG" \
@@ -85,6 +86,69 @@ pipeline {
             -t "$DOCKERHUB_USER/$CAST_IMAGE:$IMAGE_TAG" \
             --push \
             ./cast-service
+
+          echo "Pushed:"
+          echo " - $DOCKERHUB_USER/$MOVIE_IMAGE:$IMAGE_TAG"
+          echo " - $DOCKERHUB_USER/$CAST_IMAGE:$IMAGE_TAG"
+        '''
+      }
+    }
+
+    stage('Deploy (dev/qa/staging)') {
+      when {
+        anyOf {
+          branch 'dev'
+          branch 'qa'
+          branch 'staging'
+        }
+      }
+      steps {
+        sh '''
+          set -e
+
+          NS="$BRANCH_NAME"
+          echo "### Deploying to namespace: $NS"
+
+          kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create ns "$NS"
+
+          helm -n "$NS" upgrade --install movie charts \
+            --set image.repository="$DOCKERHUB_USER/$CAST_IMAGE" \
+            --set image.tag="$IMAGE_TAG" \
+            --set replicaCount=1
+
+          echo "### Status"
+          kubectl -n "$NS" get deploy,pod,svc -o wide
+          kubectl -n "$NS" logs deploy/cast-service --tail=30 || true
+        '''
+      }
+    }
+
+    stage('Approve PROD (master only)') {
+      when { branch 'master' }
+      steps {
+        input message: "Déployer en PRODUCTION (namespace prod) à partir de master ?"
+      }
+    }
+
+    stage('Deploy PROD (master only)') {
+      when { branch 'master' }
+      steps {
+        sh '''
+          set -e
+
+          NS="prod"
+          echo "### Deploying to namespace: $NS (MANUAL gate passed)"
+
+          kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create ns "$NS"
+
+          helm -n "$NS" upgrade --install movie charts \
+            --set image.repository="$DOCKERHUB_USER/$CAST_IMAGE" \
+            --set image.tag="$IMAGE_TAG" \
+            --set replicaCount=1
+
+          echo "### Status"
+          kubectl -n "$NS" get deploy,pod,svc -o wide
+          kubectl -n "$NS" logs deploy/cast-service --tail=30 || true
         '''
       }
     }
@@ -94,7 +158,6 @@ pipeline {
     always {
       sh '''
         docker logout || true
-        # Nettoyage léger : ne casse rien si absent
         docker buildx rm jenkins-builder >/dev/null 2>&1 || true
       '''
     }

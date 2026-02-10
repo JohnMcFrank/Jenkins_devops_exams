@@ -14,8 +14,10 @@ spec:
     spec:
       containers:
         - name: cast-service
-          image: johndavidmcfrank/cast-service:dev
+          image: johndavidmcfrank/cast-service:dev-11
           imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "uvicorn"]
+          args: ["app.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio"]
           ports:
             - containerPort: 8000
           env:
